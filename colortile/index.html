@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Tiles Remake (Polished UI)</title>
+    <style>
+        body {
+            background-color: #222; /* 背景を少し明るくしてコントラストを調整 */
+            color: #fff;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            background-color: #000;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8); /* 影を強調 */
+            border: 3px solid #444; /* 枠線を少し太く */
+            border-radius: 8px; /* コンテナ自体の角も少し丸める */
+            transition: border-color 0.1s, box-shadow 0.1s;
+        }
+        /* Penalty Flash Animation */
+        .penalty-flash {
+            border-color: #ff0000 !important;
+            box-shadow: 0 0 50px #ff0000 !important;
+        }
+        
+        canvas {
+            display: block;
+            cursor: pointer;
+            border-radius: 5px; /* キャンバスの角も丸める */
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.85);
+            transition: opacity 0.2s;
+            z-index: 10;
+            border-radius: 5px;
+        }
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        h1 {
+            font-size: 36px;
+            margin-bottom: 20px;
+            color: #fff;
+            text-shadow: 2px 2px 0 #0066ff;
+        }
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        #time-display {
+            font-family: 'Courier New', monospace;
+        }
+        .control-group {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input[type="text"] {
+            padding: 10px;
+            font-size: 18px;
+            width: 200px;
+            text-align: center;
+            border-radius: 5px;
+            border: 2px solid #555;
+            background: #333;
+            color: #fff;
+            outline: none;
+        }
+        input[type="text"]:focus {
+            border-color: #ff9900;
+        }
+        button {
+            padding: 10px 30px;
+            font-size: 24px;
+            background: linear-gradient(to bottom, #ffaa33, #ff8800); /* ボタンもグラデーションに */
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: transform 0.1s, filter 0.1s;
+            box-shadow: 0 4px 0 #cc6600;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.1);
+        }
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 #cc6600;
+        }
+        #final-score {
+            font-size: 48px;
+            color: #ff6666;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #ccc;
+        }
+        .damage-text {
+            color: #ff3333;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ff0000;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="hud">
+        <div id="score-display">Score: 0</div>
+        <div id="time-display">Time: 120.00</div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui-layer">
+            <h1 id="title-text">Color Tiles Remake</h1>
+            <div id="result-area" class="hidden">
+                <div>SCORE</div>
+                <div id="final-score">0</div>
+            </div>
+            
+            <div class="control-group">
+                <label class="label">Random Seed (Empty = Random)</label>
+                <input type="text" id="seed-input" placeholder="Enter Seed...">
+            </div>
+            
+            <button id="start-btn">START GAME</button>
+        </div>
+    </div>
+
+<script>
+    /**
+     * Color Tiles Remake Logic (Polished UI Version)
+     * Includes gradients and rounded corners for tiles.
+     */
+
+    // --- Configuration ---
+    const CONFIG = {
+        cols: 23,
+        rows: 15,
+        tileSize: 30,
+        tilePadding: 2,     // タイル間の隙間（ピクセル）
+        cornerRadius: 6,    // 角丸の半径
+        timeLimit: 120,
+        penaltyTime: 10,
+        tilesPerColor: 20,
+        // 色の定義をオブジェクトに変更（ベース色とハイライト色）
+        colors: [
+            { base: '#0055cc', light: '#4d94ff' }, // Blue
+            { base: '#cc7a00', light: '#ffbd4d' }, // Orange
+            { base: '#cc4444', light: '#ff9999' }, // Red
+            { base: '#00a300', light: '#66e066' }, // Green
+            { base: '#a344a3', light: '#e099e0' }, // Purple
+            { base: '#a35200', light: '#e0a366' }, // Brownish Orange
+            { base: '#a3a344', light: '#e0e099' }, // Yellowish
+            { base: '#44a3a3', light: '#99e0e0' }, // Cyanish
+            { base: '#888888', light: '#cccccc' }, // Grey
+            { base: '#cc66cc', light: '#ff99ff' }  // Pink
+        ]
+    };
+
+    // --- State ---
+    let state = {
+        board: [],
+        score: 0,
+        timeLeft: 0,
+        isPlaying: false,
+        lastTime: 0,
+        seed: 0
+    };
+
+    // --- Audio System ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playTone(freq, type, duration, startTime = 0, vol = 0.1) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + startTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime + startTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + startTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(audioCtx.currentTime + startTime);
+        osc.stop(audioCtx.currentTime + startTime + duration);
+    }
+
+    const SFX = {
+        match: () => {
+            playTone(880, 'sine', 0.1, 0, 0.1);
+            playTone(1760, 'sine', 0.1, 0.05, 0.05);
+        },
+        combo: () => {
+            playTone(523.25, 'triangle', 0.3, 0, 0.1);
+            playTone(659.25, 'triangle', 0.3, 0.05, 0.1);
+            playTone(783.99, 'triangle', 0.3, 0.1, 0.1);
+            playTone(1046.50, 'triangle', 0.4, 0.15, 0.1);
+        },
+        miss: () => {
+            playTone(150, 'sawtooth', 0.2, 0, 0.2);
+            playTone(100, 'sawtooth', 0.2, 0.05, 0.2);
+        }
+    };
+
+    // --- DOM Elements ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const uiLayer = document.getElementById('ui-layer');
+    const startBtn = document.getElementById('start-btn');
+    const seedInput = document.getElementById('seed-input');
+    const timeDisplay = document.getElementById('time-display');
+    const scoreDisplay = document.getElementById('score-display');
+    const titleText = document.getElementById('title-text');
+    const resultArea = document.getElementById('result-area');
+    const finalScoreEl = document.getElementById('final-score');
+    const gameContainer = document.getElementById('game-container');
+
+    canvas.width = CONFIG.cols * CONFIG.tileSize;
+    canvas.height = CONFIG.rows * CONFIG.tileSize;
+
+    // --- Seeded RNG ---
+    function mulberry32(a) {
+        return function() {
+            var t = a += 0x6D2B79F5;
+            t = Math.imul(t ^ t >>> 15, t | 1);
+            t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        }
+    }
+
+    function cyrb128(str) {
+        let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+        for (let i = 0, k; i < str.length; i++) {
+            k = str.charCodeAt(i);
+            h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+            h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+            h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+            h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+        }
+        h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+        h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+        h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+        h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+        return (h1^h2^h3^h4) >>> 0;
+    }
+
+    let randFunc = Math.random;
+
+    // --- Game Logic ---
+
+    function initGame() {
+        let seedStr = seedInput.value.trim();
+        if (seedStr === "") {
+            seedStr = Date.now().toString();
+        }
+        const seedVal = cyrb128(seedStr);
+        randFunc = mulberry32(seedVal);
+
+        state.score = 0;
+        state.timeLeft = CONFIG.timeLimit;
+        state.isPlaying = true;
+        state.lastTime = performance.now();
+
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        generateBoard();
+        drawBoard();
+        updateUI();
+
+        uiLayer.classList.add('hidden');
+        resultArea.classList.add('hidden');
+        
+        requestAnimationFrame(gameLoop);
+    }
+
+    function generateBoard() {
+        let tiles = [];
+        for (let c = 0; c < CONFIG.colors.length; c++) {
+            for (let i = 0; i < CONFIG.tilesPerColor; i++) {
+                tiles.push(c);
+            }
+        }
+        const totalCells = CONFIG.cols * CONFIG.rows;
+        while (tiles.length < totalCells) {
+            tiles.push(-1);
+        }
+
+        for (let i = tiles.length - 1; i > 0; i--) {
+            const j = Math.floor(randFunc() * (i + 1));
+            [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+        }
+
+        state.board = tiles;
+    }
+
+    function getTile(x, y) {
+        if (x < 0 || x >= CONFIG.cols || y < 0 || y >= CONFIG.rows) return null;
+        return state.board[y * CONFIG.cols + x];
+    }
+
+    function setTile(x, y, val) {
+        if (x < 0 || x >= CONFIG.cols || y < 0 || y >= CONFIG.rows) return;
+        state.board[y * CONFIG.cols + x] = val;
+    }
+
+    function triggerPenalty() {
+        SFX.miss();
+        state.timeLeft -= CONFIG.penaltyTime;
+        if (state.timeLeft < 0) state.timeLeft = 0;
+        
+        gameContainer.classList.add('penalty-flash');
+        setTimeout(() => {
+            gameContainer.classList.remove('penalty-flash');
+        }, 150);
+        
+        updateUI(true); 
+    }
+
+    function handleBoardClick(cx, cy) {
+        if (!state.isPlaying) return;
+
+        const clickedTile = getTile(cx, cy);
+        if (clickedTile !== -1) return;
+
+        let top = scanDirection(cx, cy, 0, -1);
+        let bottom = scanDirection(cx, cy, 0, 1);
+        let left = scanDirection(cx, cy, -1, 0);
+        let right = scanDirection(cx, cy, 1, 0);
+
+        let tilesToRemove = [];
+
+        if (top && bottom && top.val === bottom.val) tilesToRemove.push(top, bottom);
+        if (left && right && left.val === right.val) tilesToRemove.push(left, right);
+
+        if (top && left && top.val === left.val) tilesToRemove.push(top, left);
+        if (top && right && top.val === right.val) tilesToRemove.push(top, right);
+        if (bottom && left && bottom.val === left.val) tilesToRemove.push(bottom, left);
+        if (bottom && right && bottom.val === right.val) tilesToRemove.push(bottom, right);
+
+        if (tilesToRemove.length > 0) {
+            const uniqueTiles = [];
+            const map = new Map();
+            for (const item of tilesToRemove) {
+                const key = `${item.x},${item.y}`;
+                if(!map.has(key)){
+                    map.set(key, true);
+                    uniqueTiles.push(item);
+                }
+            }
+
+            uniqueTiles.forEach(t => setTile(t.x, t.y, -1));
+            state.score += uniqueTiles.length;
+            
+            if (uniqueTiles.length >= 3) {
+                SFX.combo();
+            } else {
+                SFX.match();
+            }
+            
+            drawBoard();
+            updateUI();
+        } else {
+            triggerPenalty();
+        }
+    }
+
+    function scanDirection(sx, sy, dx, dy) {
+        let x = sx + dx;
+        let y = sy + dy;
+        while (true) {
+            const val = getTile(x, y);
+            if (val === null) return null;
+            if (val !== -1) return { x: x, y: y, val: val };
+            x += dx;
+            y += dy;
+        }
+    }
+
+    // --- Rendering (Polished) ---
+
+    // Helper function to draw a rounded rectangle path
+    function roundedRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+
+    function drawBoard() {
+        // Background
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let y = 0; y < CONFIG.rows; y++) {
+            for (let x = 0; x < CONFIG.cols; x++) {
+                const val = state.board[y * CONFIG.cols + x];
+                
+                // Calculate position with padding
+                const px = x * CONFIG.tileSize + CONFIG.tilePadding;
+                const py = y * CONFIG.tileSize + CONFIG.tilePadding;
+                const size = CONFIG.tileSize - (CONFIG.tilePadding * 2);
+
+                if (val !== -1) {
+                    // --- Draw Colored Tile (Rounded & Gradient) ---
+                    const colorDef = CONFIG.colors[val];
+
+                    // 1. Define the rounded shape path
+                    roundedRect(ctx, px, py, size, size, CONFIG.cornerRadius);
+
+                    // 2. Create Linear Gradient (Top-Left to Bottom-Right)
+                    // This creates the bevel/lighting effect
+                    const gradient = ctx.createLinearGradient(px, py, px + size, py + size);
+                    gradient.addColorStop(0, colorDef.light); // Highlight color at top-left
+                    gradient.addColorStop(1, colorDef.base);  // Base color at bottom-right
+                    
+                    // 3. Fill with gradient
+                    ctx.fillStyle = gradient;
+                    ctx.fill();
+
+                    // 4. Add a subtle border for definition
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+                    ctx.stroke();
+
+                } else {
+                    // --- Draw Empty Grid ---
+                    ctx.strokeStyle = "#333"; // Subtler grid color
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x * CONFIG.tileSize, y * CONFIG.tileSize, CONFIG.tileSize, CONFIG.tileSize);
+                }
+            }
+        }
+    }
+
+    function updateUI(isPenalty = false) {
+        scoreDisplay.textContent = `Score: ${state.score}`;
+        let t = Math.max(0, state.timeLeft);
+        timeDisplay.textContent = `Time: ${t.toFixed(2)}`;
+        
+        if (isPenalty) {
+            timeDisplay.classList.add('damage-text');
+            setTimeout(() => timeDisplay.classList.remove('damage-text'), 300);
+        }
+    }
+
+    // --- Loop ---
+
+    function gameLoop(timestamp) {
+        if (!state.isPlaying) return;
+
+        const delta = (timestamp - state.lastTime) / 1000;
+        state.lastTime = timestamp;
+
+        state.timeLeft -= delta;
+        if (state.timeLeft <= 0) {
+            state.timeLeft = 0;
+            endGame();
+        }
+
+        updateUI();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+        state.isPlaying = false;
+        updateUI();
+        
+        finalScoreEl.textContent = state.score;
+        titleText.textContent = "TIME UP";
+        resultArea.classList.remove('hidden');
+        uiLayer.classList.remove('hidden');
+        startBtn.textContent = "PLAY AGAIN";
+    }
+
+    // --- Events ---
+
+    startBtn.addEventListener('click', initGame);
+
+    canvas.addEventListener('mousedown', (e) => {
+        // Prevent interaction if game not running or clicking through UI
+        if(!state.isPlaying && state.timeLeft > 0) return; 
+
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const cx = Math.floor((mouseX * scaleX) / CONFIG.tileSize);
+        const cy = Math.floor((mouseY * scaleY) / CONFIG.tileSize);
+
+        handleBoardClick(cx, cy);
+    });
+
+    // Initial Empty Draw
+    drawBoard();
+
+</script>
+</body>
+</html>
