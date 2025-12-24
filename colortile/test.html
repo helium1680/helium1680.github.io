@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Tiles Solver: All Stars (No Look-Ahead)</title>
+    <style>
+        body {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-bottom: 20px; color: #fff; text-shadow: 0 0 10px rgba(0,150,255,0.5); }
+        .container {
+            width: 100%;
+            max-width: 1100px;
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+            background: #333;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #444;
+        }
+        .input-group { display: flex; flex-direction: column; }
+        label { font-size: 11px; color: #aaa; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        input {
+            padding: 10px; background: #222; border: 1px solid #555; 
+            color: #0f0; font-family: monospace; border-radius: 4px;
+            font-size: 14px; text-align: center;
+        }
+        button {
+            grid-column: 1 / -1;
+            padding: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            background: linear-gradient(to bottom, #0066cc, #004499);
+            color: white; border: none; border-radius: 4px; cursor: pointer;
+            transition: all 0.1s;
+            box-shadow: 0 4px 0 #002255;
+        }
+        button:hover { filter: brightness(1.2); transform: translateY(-1px); }
+        button:active { transform: translateY(2px); box-shadow: 0 1px 0 #002255; }
+        button:disabled { background: #555; box-shadow: none; color: #888; cursor: wait; }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+            margin-top: 10px;
+        }
+        th { text-align: left; color: #888; font-size: 12px; padding: 0 10px; border-bottom: 1px solid #444; }
+        td { background: #363636; padding: 10px 15px; border-top: 1px solid #444; border-bottom: 1px solid #222; vertical-align: middle; }
+        tr td:first-child { border-radius: 6px 0 0 6px; border-left: 1px solid #444; }
+        tr td:last-child { border-radius: 0 6px 6px 0; border-right: 1px solid #444; }
+
+        .algo-title { font-size: 14px; font-weight: bold; color: #fff; }
+        .algo-desc { font-size: 10px; color: #888; margin-top: 2px; }
+        .stat-val { font-size: 15px; font-weight: bold; font-family: monospace; }
+        .bad-val { color: #ff8866; font-size: 13px; font-family: monospace; }
+        
+        .prog-track { width: 100%; height: 6px; background: #222; border-radius: 3px; border: 1px solid #444; overflow: hidden; }
+        .prog-bar { height: 100%; width: 0%; transition: width 0.1s linear; }
+
+        #total-progress-container { margin-top: 20px; text-align: center; }
+        #total-progress-bar { width: 100%; height: 4px; background: #222; margin-top:5px; }
+        #total-progress-fill { height: 100%; background: #00ccff; width: 0%; transition: width 0.1s; }
+    </style>
+</head>
+<body>
+
+    <h1>Color Tiles Solver <span style="font-size:12px; color:#666;">v9.0 All Stars</span></h1>
+
+    <div class="container">
+        <div class="controls">
+            <div class="input-group">
+                <label>Base Random Seed</label>
+                <input type="text" id="seed-input" placeholder="Auto-generated">
+            </div>
+            <div class="input-group">
+                <label>Total Trials</label>
+                <input type="number" id="trials-input" value="1000" min="100" max="100000">
+            </div>
+            <button id="run-btn">START SIMULATION</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th width="30%">Algorithm</th>
+                    <th width="15%">Clear Rate</th>
+                    <th width="15%">Odd Moves</th>
+                    <th width="40%">Visual</th>
+                </tr>
+            </thead>
+            <tbody id="result-body"></tbody>
+        </table>
+
+        <div id="total-progress-container">
+            <div id="total-progress-text">Ready</div>
+            <div id="total-progress-bar"><div id="total-progress-fill"></div></div>
+        </div>
+    </div>
+
+<script>
+    // --- Configuration ---
+    const COLS = 23;
+    const ROWS = 15;
+    const TOTAL_CELLS = COLS * ROWS;
+    const TILES_PER_COLOR = 20;
+    const COLOR_COUNT = 10;
+    const CENTER_X = COLS / 2;
+    const CENTER_Y = ROWS / 2;
+    
+    // Strategies Definition
+    const STRATEGIES = [
+        { 
+            id: 'random', name: 'Random', desc: '完全ランダム (基準)', color: '#666666'
+        },
+        { 
+            id: 'parity', name: 'Parity Keeper', desc: '偶数消し優先', color: '#aaaaaa'
+        },
+        { 
+            id: 'edge', name: 'Edge + Cluster', desc: '端(外側)優先 + 密集破壊', color: '#66ff66'
+        },
+        { 
+            id: 'diagonal', name: 'Diagonal Sweep', desc: '左下から右上へ + 密集破壊', color: '#aa66ff'
+        },
+        { 
+            id: 'balance', name: 'Color Balance', desc: '多い色を優先 + 密集破壊', color: '#ffcc00'
+        },
+        { 
+            id: 'cluster', name: 'Cluster Breaker', desc: '密集破壊を最優先', color: '#00ccff'
+        },
+        { 
+            id: 'strategic', name: 'Strategic', desc: '4個優先 > 密集 > 中央', color: '#ff3366'
+        }
+    ];
+
+    // --- RNG (Mulberry32) ---
+    function mulberry32(a) {
+        return function() {
+            var t = a += 0x6D2B79F5;
+            t = Math.imul(t ^ t >>> 15, t | 1);
+            t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        }
+    }
+    
+    function cyrb128(str) {
+        let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+        for (let i = 0, k; i < str.length; i++) {
+            k = str.charCodeAt(i);
+            h1 = h2 ^ Math.imul(h1 ^ k, 597399067); h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+            h3 = h4 ^ Math.imul(h3 ^ k, 951274213); h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+        }
+        return (h1^h2^h3^h4) >>> 0;
+    }
+
+    // --- Core Logic ---
+
+    function generateBoard(rng) {
+        const board = new Int8Array(TOTAL_CELLS);
+        let idx = 0;
+        for (let c = 0; c < COLOR_COUNT; c++) {
+            for (let i = 0; i < TILES_PER_COLOR; i++) {
+                board[idx++] = c;
+            }
+        }
+        while (idx < TOTAL_CELLS) board[idx++] = -1;
+
+        for (let i = TOTAL_CELLS - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            const temp = board[i];
+            board[i] = board[j];
+            board[j] = temp;
+        }
+        return board;
+    }
+
+    function scanMove(board, idx) {
+        if (board[idx] !== -1) return null;
+        const cx = idx % COLS;
+        const cy = (idx / COLS) | 0;
+        let top=-1, bottom=-1, left=-1, right=-1;
+        let topVal=-1, bottomVal=-1, leftVal=-1, rightVal=-1;
+
+        for (let y = cy - 1; y >= 0; y--) { const p = y*COLS+cx; if(board[p]!==-1){top=p; topVal=board[p]; break;} }
+        for (let y = cy + 1; y < ROWS; y++) { const p = y*COLS+cx; if(board[p]!==-1){bottom=p; bottomVal=board[p]; break;} }
+        for (let x = cx - 1; x >= 0; x--) { const p = cy*COLS+x; if(board[p]!==-1){left=p; leftVal=board[p]; break;} }
+        for (let x = cx + 1; x < COLS; x++) { const p = cy*COLS+x; if(board[p]!==-1){right=p; rightVal=board[p]; break;} }
+
+        const targets = [];
+        if (top!==-1 && bottom!==-1 && topVal===bottomVal) targets.push(top, bottom);
+        if (left!==-1 && right!==-1 && leftVal===rightVal) targets.push(left, right);
+        if (top!==-1 && left!==-1 && topVal===leftVal) targets.push(top, left);
+        if (top!==-1 && right!==-1 && topVal===rightVal) targets.push(top, right);
+        if (bottom!==-1 && left!==-1 && bottomVal===leftVal) targets.push(bottom, left);
+        if (bottom!==-1 && right!==-1 && bottomVal===rightVal) targets.push(bottom, right);
+
+        if (targets.length === 0) return null;
+        if (targets.length > 2) {
+            const unique = [];
+            for (let i = 0; i < targets.length; i++) {
+                if (unique.indexOf(targets[i]) === -1) unique.push(targets[i]);
+            }
+            return unique;
+        }
+        return targets;
+    }
+
+    function getValidMoves(board) {
+        const moves = [];
+        for (let i = 0; i < TOTAL_CELLS; i++) {
+            if (board[i] === -1) {
+                const t = scanMove(board, i);
+                if (t) moves.push({ idx: i, targets: t });
+            }
+        }
+        return moves;
+    }
+
+    // --- Helpers ---
+
+    function getClusterScore(board, targets) {
+        let score = 0;
+        for (let i = 0; i < targets.length; i++) {
+            const p = targets[i];
+            const color = board[p];
+            const cx = p % COLS;
+            const cy = (p / COLS) | 0;
+            if (cy > 0 && board[p - COLS] === color) score++;
+            if (cy < ROWS - 1 && board[p + COLS] === color) score++;
+            if (cx > 0 && board[p - 1] === color) score++;
+            if (cx < COLS - 1 && board[p + 1] === color) score++;
+        }
+        return score;
+    }
+
+    function getColorCounts(board) {
+        const counts = new Array(COLOR_COUNT).fill(0);
+        for(let i=0; i<TOTAL_CELLS; i++) {
+            if (board[i] !== -1) counts[board[i]]++;
+        }
+        return counts;
+    }
+
+    // --- AI Agents ---
+
+    // 1. Random
+    function agentRandom(moves) {
+        return moves[(Math.random() * moves.length) | 0];
+    }
+
+    // 2. Parity Keeper
+    function agentParity(moves) {
+        const evenMoves = [];
+        for (let i = 0; i < moves.length; i++) if ((moves[i].targets.length & 1) === 0) evenMoves.push(moves[i]);
+        const candidates = (evenMoves.length > 0) ? evenMoves : moves;
+        return candidates[(Math.random() * candidates.length) | 0];
+    }
+
+    // 3. Edge + Cluster
+    function agentEdge(moves, board) {
+        const evenMoves = [];
+        for (let i = 0; i < moves.length; i++) if ((moves[i].targets.length & 1) === 0) evenMoves.push(moves[i]);
+        const candidates = (evenMoves.length > 0) ? evenMoves : moves;
+
+        let bestScore = -1;
+        let bestDist = -1;
+        let bestIndices = [];
+
+        for (let i = 0; i < candidates.length; i++) {
+            const m = candidates[i];
+            // Primary: Cluster
+            const score = getClusterScore(board, m.targets);
+            // Secondary: Edge (Distance from center)
+            const mx = m.idx % COLS;
+            const my = (m.idx / COLS) | 0;
+            const dist = Math.abs(mx - CENTER_X) + Math.abs(my - CENTER_Y);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestDist = dist;
+                bestIndices = [i];
+            } else if (score === bestScore) {
+                if (dist > bestDist) {
+                    bestDist = dist;
+                    bestIndices = [i];
+                } else if (dist === bestDist) {
+                    bestIndices.push(i);
+                }
+            }
+        }
+        return candidates[bestIndices[(Math.random() * bestIndices.length) | 0]];
+    }
+
+    // 4. Diagonal Sweep + Cluster
+    function agentDiagonal(moves, board) {
+        const evenMoves = [];
+        for (let i = 0; i < moves.length; i++) if ((moves[i].targets.length & 1) === 0) evenMoves.push(moves[i]);
+        const candidates = (evenMoves.length > 0) ? evenMoves : moves;
+
+        let bestScore = -1;
+        let bestDiag = -99999;
+        let bestIndices = [];
+
+        for (let i = 0; i < candidates.length; i++) {
+            const m = candidates[i];
+            const score = getClusterScore(board, m.targets);
+            // Diagonal: Y - X (Bottom Left max)
+            const mx = m.idx % COLS;
+            const my = (m.idx / COLS) | 0;
+            const diag = my - mx;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestDiag = diag;
+                bestIndices = [i];
+            } else if (score === bestScore) {
+                if (diag > bestDiag) {
+                    bestDiag = diag;
+                    bestIndices = [i];
+                } else if (diag === bestDiag) {
+                    bestIndices.push(i);
+                }
+            }
+        }
+        return candidates[bestIndices[(Math.random() * bestIndices.length) | 0]];
+    }
+
+    // 5. Color Balance + Cluster
+    function agentBalance(moves, board) {
+        const evenMoves = [];
+        for (let i = 0; i < moves.length; i++) if ((moves[i].targets.length & 1) === 0) evenMoves.push(moves[i]);
+        const candidates = (evenMoves.length > 0) ? evenMoves : moves;
+
+        const colorCounts = getColorCounts(board);
+        let bestScore = -9999;
+        let bestIndices = [];
+
+        for (let i = 0; i < candidates.length; i++) {
+            const m = candidates[i];
+            const targetColor = board[m.targets[0]];
+            const clusterScore = getClusterScore(board, m.targets);
+            const balanceScore = colorCounts[targetColor];
+            
+            // Weight: Cluster 2.0, Balance 1.0
+            const totalScore = (clusterScore * 2.0) + (balanceScore * 1.0);
+
+            if (totalScore > bestScore) { bestScore = totalScore; bestIndices = [i]; }
+            else if (totalScore === bestScore) { bestIndices.push(i); }
+        }
+        return candidates[bestIndices[(Math.random() * bestIndices.length) | 0]];
+    }
+
+    // 6. Cluster Breaker
+    function agentCluster(moves, board) {
+        const evenMoves = [];
+        for (let i = 0; i < moves.length; i++) if ((moves[i].targets.length & 1) === 0) evenMoves.push(moves[i]);
+        const candidates = (evenMoves.length > 0) ? evenMoves : moves;
+
+        let bestScore = -1;
+        let bestIndices = [];
+        for (let i = 0; i < candidates.length; i++) {
+            const score = getClusterScore(board, candidates[i].targets);
+            if (score > bestScore) { bestScore = score; bestIndices = [i]; }
+            else if (score === bestScore) { bestIndices.push(i); }
+        }
+        return candidates[bestIndices[(Math.random() * bestIndices.length) | 0]];
+    }
+
+    // 7. Strategic (4-match Priority)
+    function agentStrategic(moves, board) {
+        let bestMove = null;
+        let bestPriority = -1;
+        let bestScore = -1;
+        let bestCentrality = 9999;
+
+        for (let i = 0; i < moves.length; i++) {
+            const m = moves[i];
+            const len = m.targets.length;
+            
+            let priority = 0;
+            if (len === 4) priority = 2;
+            else if (len === 2) priority = 1;
+            else priority = 0;
+
+            if (priority < bestPriority) continue;
+
+            const score = getClusterScore(board, m.targets);
+            const mx = m.idx % COLS;
+            const my = (m.idx / COLS) | 0;
+            const centrality = Math.abs(mx - CENTER_X) + Math.abs(my - CENTER_Y);
+
+            if (priority > bestPriority) {
+                bestPriority = priority;
+                bestScore = score;
+                bestCentrality = centrality;
+                bestMove = m;
+            } else {
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCentrality = centrality;
+                    bestMove = m;
+                } else if (score === bestScore) {
+                    if (centrality < bestCentrality) {
+                        bestCentrality = centrality;
+                        bestMove = m;
+                    }
+                    else if (centrality === bestCentrality) {
+                        if (Math.random() < 0.5) bestMove = m;
+                    }
+                }
+            }
+        }
+        return bestMove;
+    }
+
+    // --- Solver ---
+
+    function solveBoard(board, strategyId) {
+        let oddMovesExecuted = 0; 
+        let totalMoves = 0;
+        let safety = 0;
+
+        while (safety++ < 1000) {
+            const moves = getValidMoves(board);
+            
+            if (moves.length === 0) {
+                let remaining = 0;
+                for (let i = 0; i < TOTAL_CELLS; i++) if (board[i] !== -1) remaining++;
+                return { cleared: (remaining === 0), oddExecuted: oddMovesExecuted, totalMoves: totalMoves };
+            }
+
+            let move;
+            switch(strategyId) {
+                case 'random': move = agentRandom(moves); break;
+                case 'parity': move = agentParity(moves); break;
+                case 'edge': move = agentEdge(moves, board); break;
+                case 'diagonal': move = agentDiagonal(moves, board); break;
+                case 'balance': move = agentBalance(moves, board); break;
+                case 'cluster': move = agentCluster(moves, board); break;
+                case 'strategic': move = agentStrategic(moves, board); break;
+                default: move = agentRandom(moves);
+            }
+
+            if ((move.targets.length & 1) !== 0) oddMovesExecuted++;
+
+            for (let t of move.targets) board[t] = -1;
+            totalMoves++;
+        }
+        return { cleared: false, oddExecuted: 0, totalMoves: 0 };
+    }
+
+    // --- UI & Loop ---
+
+    let isRunning = false;
+    const stats = {};
+
+    STRATEGIES.forEach(s => { stats[s.id] = { cleared: 0, totalOddExecuted: 0, totalMoves: 0 }; });
+
+    function initTable() {
+        const tbody = document.getElementById('result-body');
+        tbody.innerHTML = '';
+        STRATEGIES.forEach(strat => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>
+                    <div class="algo-title">${strat.name}</div>
+                    <div class="algo-desc">${strat.desc}</div>
+                </td>
+                <td class="stat-val" id="rate-${strat.id}" style="color:${strat.color}">0.0%</td>
+                <td class="bad-val" id="odd-${strat.id}">0.00</td>
+                <td><div class="prog-track"><div class="prog-bar" id="bar-${strat.id}" style="background:${strat.color}"></div></div></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    document.getElementById('run-btn').addEventListener('click', () => {
+        if (isRunning) return;
+        const seedInput = document.getElementById('seed-input');
+        const trials = parseInt(document.getElementById('trials-input').value);
+        let baseSeed = seedInput.value.trim() === "" ? (Math.random() * 0xFFFFFFFF)|0 : cyrb128(seedInput.value);
+        
+        STRATEGIES.forEach(s => { stats[s.id] = { cleared: 0, totalOddExecuted: 0, totalMoves: 0 }; });
+        initTable();
+        
+        isRunning = true;
+        document.getElementById('run-btn').disabled = true;
+        
+        let completed = 0;
+        const startTime = performance.now();
+        let batchSize = 10; 
+
+        function loop() {
+            const loopStart = performance.now();
+            let loops = 0;
+            while (loops < batchSize && completed < trials) {
+                const currentSeed = baseSeed + completed;
+                const rng = mulberry32(currentSeed);
+                const masterBoard = generateBoard(rng);
+
+                STRATEGIES.forEach(strat => {
+                    const boardCopy = masterBoard.slice();
+                    const res = solveBoard(boardCopy, strat.id);
+                    if (res.cleared) stats[strat.id].cleared++;
+                    stats[strat.id].totalOddExecuted += res.oddExecuted;
+                    stats[strat.id].totalMoves += res.totalMoves;
+                });
+                completed++;
+                loops++;
+            }
+
+            STRATEGIES.forEach(strat => {
+                const rate = (stats[strat.id].cleared / completed * 100).toFixed(1);
+                document.getElementById(`rate-${strat.id}`).textContent = `${rate}%`;
+                document.getElementById(`bar-${strat.id}`).style.width = `${rate}%`;
+                const s = stats[strat.id];
+                const avgOdd = s.totalMoves > 0 ? (s.totalOddExecuted / completed).toFixed(2) : "0.00";
+                document.getElementById(`odd-${strat.id}`).textContent = `${avgOdd}`;
+            });
+
+            const totalPct = (completed / trials * 100).toFixed(1);
+            document.getElementById('total-progress-fill').style.width = `${totalPct}%`;
+            document.getElementById('total-progress-text').textContent = `Progress: ${completed} / ${trials} (${totalPct}%)`;
+
+            const loopTime = performance.now() - loopStart;
+            // Adjust batch size
+            if (loopTime < 15) batchSize++;
+            else if (loopTime > 40) batchSize = Math.max(1, Math.floor(batchSize * 0.8));
+
+            if (completed < trials) requestAnimationFrame(loop);
+            else {
+                isRunning = false;
+                document.getElementById('run-btn').disabled = false;
+                document.getElementById('total-progress-text').textContent = `Done! Time: ${((performance.now() - startTime)/1000).toFixed(2)}s`;
+            }
+        }
+        requestAnimationFrame(loop);
+    });
+
+    initTable();
+</script>
+</body>
+</html>
