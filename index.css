@@ -48,12 +48,13 @@ main {
     color: #000000;
 }
 
-.sns{
+.list{
     display: flex;
     font-size: 30px;
     color: #3b3a2f;
 }
 
-main .sns img{
+main .list img{
     height: 30px;
+
 }
