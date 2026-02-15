@@ -18,7 +18,7 @@
             user-select: none;
         }
         
-        /* Layout */
+        /* Layout Container with Responsive Support */
         #main-wrapper {
             display: flex;
             flex-direction: row;
@@ -28,6 +28,9 @@
             background-color: #383838;
             border-radius: 12px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            /* スケーリングの基点を中心に設定 */
+            transform-origin: center center;
+            transition: transform 0.1s ease-out;
         }
 
         /* --- Sidebar --- */
@@ -324,12 +327,6 @@
     </div>
 
 <script>
-    /**
-     * Color Tiles Remake
-     * - Immediate End on Perfect Clear
-     * - Elapsed Time Display on Perfect Clear
-     */
-
     const CONFIG = {
         cols: 23,
         rows: 15,
@@ -418,6 +415,7 @@
     // --- DOM Elements ---
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('main-wrapper');
     const darkOverlay = document.getElementById('dark-overlay');
     const centerStartBtn = document.getElementById('center-start-btn');
     const sidebarBtn = document.getElementById('sidebar-btn');
@@ -435,6 +433,19 @@
 
     canvas.width = CONFIG.cols * CONFIG.tileSize;
     canvas.height = CONFIG.rows * CONFIG.tileSize;
+
+    // --- Responsive Scaling Logic ---
+    function resizeGame() {
+        const padding = 40;
+        const baseWidth = wrapper.offsetWidth;
+        const baseHeight = wrapper.offsetHeight;
+        const winW = window.innerWidth - padding;
+        const winH = window.innerHeight - padding;
+        
+        const scale = Math.min(winW / baseWidth, winH / baseHeight);
+        wrapper.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeGame);
 
     // --- Seeded RNG ---
     function mulberry32(a) {
@@ -466,11 +477,9 @@
 
     // --- Game Logic ---
 
-    // タイトル画面表示
     function showTitleScreen() {
         state.isPlaying = false;
         darkOverlay.classList.add('overlay-visible');
-        
         centerStartBtn.style.display = 'block';
         sidebarBtn.style.display = 'none';
         
@@ -485,6 +494,7 @@
         randFunc = mulberry32(titleSeedVal);
         generateBoard(); 
         drawBoard();
+        resizeGame(); // 初期表示でスケール調整
     }
 
     function startGame() {
@@ -520,7 +530,7 @@
         requestAnimationFrame(gameLoop);
     }
 
-    function generateBoard(dummy = false) {
+    function generateBoard() {
         let tiles = [];
         for (let c = 0; c < CONFIG.colors.length; c++) {
             for (let i = 0; i < CONFIG.tilesPerColor; i++) {
@@ -532,11 +542,9 @@
             tiles.push(-1);
         }
 
-        if (!dummy) {
-            for (let i = tiles.length - 1; i > 0; i--) {
-                const j = Math.floor(randFunc() * (i + 1));
-                [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
-            }
+        for (let i = tiles.length - 1; i > 0; i--) {
+            const j = Math.floor(randFunc() * (i + 1));
+            [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
         }
         state.board = tiles;
     }
@@ -622,15 +630,15 @@
                 SFX.match();
             }
             
-            // Check for Perfect Clear IMMEDIATELY
-            let remaining = 0;
-            for (let t of state.board) { if (t !== -1) remaining++; }
+            let remaining = state.board.filter(t => t !== -1).length;
 
             drawBoard();
             updateUI();
 
             if (remaining === 0) {
                 endGame(false, true); // Perfect Clear
+            } else if (!hasValidMoves()) {
+                endGame(true); // 手詰め判定を追加
             }
 
         } else {
@@ -780,13 +788,22 @@
                     const size = CONFIG.tileSize - (CONFIG.tilePadding * 2);
                     const colorDef = CONFIG.colors[val];
 
+                    // 1. タイトルの影・縁取りの下地（少し暗い色で描画）
+                    ctx.beginPath();
+                    roundedRect(ctx, tilePx, tilePy, size, size, CONFIG.cornerRadius);
+                    ctx.fillStyle = darkenColor(colorDef.base, 40);
+                    ctx.fill();
+
+                    // 2. メインのグラデーション
+                    ctx.beginPath();
                     roundedRect(ctx, tilePx, tilePy, size, size, CONFIG.cornerRadius);
                     const gradient = ctx.createLinearGradient(tilePx, tilePy, tilePx + size, tilePy + size);
                     gradient.addColorStop(0, colorDef.light);
-                    gradient.addColorStop(1, darkenColor(colorDef.base, 40)); 
+                    gradient.addColorStop(1, colorDef.base); 
                     ctx.fillStyle = gradient;
                     ctx.fill();
 
+                    // 3. 縁取り（stroke）
                     ctx.lineWidth = 1;
                     ctx.strokeStyle = darkenColor(colorDef.base, 60);
                     ctx.stroke();
@@ -843,14 +860,10 @@
 
         if (perfect) {
             resultTitle = "PERFECT!";
-            // Calculate Elapsed Time
             let elapsed = CONFIG.timeLimit - state.timeLeft;
             resultValue = elapsed.toFixed(2) + "s";
         } else {
-            // Check stalemate only if not perfect and tiles remain
-            let remaining = 0;
-            for (let t of state.board) { if (t !== -1) remaining++; }
-            
+            let remaining = state.board.filter(t => t !== -1).length;
             if (remaining > 0) {
                 if (!hasValidMoves()) {
                     stalemateStatusEl.textContent = "No Moves Left (Stalemate)";
@@ -863,8 +876,7 @@
         }
 
         darkOverlay.classList.add('overlay-visible');
-        
-        sidebarBtn.style.display = 'block'; // Show PLAY AGAIN
+        sidebarBtn.style.display = 'block'; 
         
         resultLabel.textContent = resultTitle;
         finalScoreEl.textContent = resultValue;
@@ -879,7 +891,7 @@
     });
     
     sidebarBtn.addEventListener('click', () => {
-        showTitleScreen(); // Go back to title
+        showTitleScreen(); 
     });
     
     resetBtn.addEventListener('click', () => {
@@ -899,14 +911,13 @@
         if(!state.isPlaying) return;
 
         const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+        
+        // スケーリングを考慮したマウス座標の補正
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-
-        const cx = Math.floor((mouseX * scaleX) / CONFIG.tileSize);
-        const cy = Math.floor((mouseY * scaleY) / CONFIG.tileSize);
+        const cx = Math.floor(mouseX / CONFIG.tileSize);
+        const cy = Math.floor(mouseY / CONFIG.tileSize);
 
         handleBoardClick(cx, cy);
     });
